@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { GoogleGenAI } from "@google/genai";
 import { 
   Send, 
@@ -25,6 +25,45 @@ import {
   User
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+
+// API Proxy for China intranet support
+const INTERNAL_PROXY = `${window.location.origin}/api/proxy/gemini`;
+const GEMINI_PROXY_URL = import.meta.env.VITE_GEMINI_PROXY_URL || INTERNAL_PROXY;
+const PROXY_HEADER_NAME = import.meta.env.VITE_GEMINI_PROXY_HEADER_NAME;
+const PROXY_HEADER_VALUE = import.meta.env.VITE_GEMINI_PROXY_HEADER_VALUE;
+
+if (GEMINI_PROXY_URL) {
+  const originalFetch = window.fetch.bind(window);
+  try {
+    Object.defineProperty(window, 'fetch', {
+      value: async (...args: any[]) => {
+        let [resource, config] = args;
+        
+        if (typeof resource === 'string' && resource.includes('generativelanguage.googleapis.com')) {
+          // Replace base URL
+          const proxyBase = GEMINI_PROXY_URL.replace(/\/$/, '');
+          resource = resource.replace('https://generativelanguage.googleapis.com', proxyBase);
+          
+          // Inject custom headers if provided
+          if (PROXY_HEADER_NAME && PROXY_HEADER_VALUE) {
+            config = config || {};
+            config.headers = {
+              ...config.headers,
+              [PROXY_HEADER_NAME]: PROXY_HEADER_VALUE
+            };
+          }
+        }
+        
+        return originalFetch(resource, config);
+      },
+      configurable: true,
+      writable: true
+    });
+  } catch (e) {
+    console.warn('无法直接覆盖 window.fetch，尝试备选方案...', e);
+    // 如果 defineProperty 也失败，通常是因为环境极其严格
+  }
+}
 
 // Initialize Gemini AI
 // (Moved inside generateContent to follow SDK best practices)
@@ -106,7 +145,21 @@ export default function App() {
   const [selectedPlatforms, setSelectedPlatforms] = useState<Platform[]>(PLATFORMS.map(p => p.id));
   const [referenceImage, setReferenceImage] = useState<string | null>(null);
   const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
+  const [proxyStatus, setProxyStatus] = useState<'testing' | 'ok' | 'error'>('testing');
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const testProxy = async () => {
+      try {
+        const res = await fetch('/api/health');
+        if (res.ok) setProxyStatus('ok');
+        else setProxyStatus('error');
+      } catch (e) {
+        setProxyStatus('error');
+      }
+    };
+    testProxy();
+  }, []);
 
   const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -261,7 +314,7 @@ export default function App() {
   };
 
   const handlePublish = (platform: string) => {
-    alert(`正在模拟发布到 ${platform}... \n发布成功！`);
+    console.log(`正在模拟发布到 ${platform}...`);
     setPreviewItem(null);
   };
 
@@ -890,7 +943,13 @@ export default function App() {
       {/* Footer */}
       <footer className="max-w-7xl mx-auto px-4 py-12 border-t border-slate-200 mt-20">
         <div className="flex flex-col md:flex-row items-center justify-between gap-6 text-slate-400 text-sm">
-          <p>© 2026 AI 多平台创作助手. Powered by Gemini AI.</p>
+          <div className="flex items-center gap-4">
+            <p>© 2026 AI 多平台创作助手. Powered by Gemini AI.</p>
+            <div className="flex items-center gap-2 px-2 py-1 bg-slate-100 rounded-full text-[10px]">
+              <div className={`w-2 h-2 rounded-full ${proxyStatus === 'ok' ? 'bg-emerald-500' : proxyStatus === 'error' ? 'bg-red-500' : 'bg-amber-500 animate-pulse'}`} />
+              <span>网络代理: {proxyStatus === 'ok' ? '已连接' : proxyStatus === 'error' ? '连接失败' : '检测中...'}</span>
+            </div>
+          </div>
           <div className="flex items-center gap-6">
             <a href="#" className="hover:text-indigo-600 transition-colors">使用条款</a>
             <a href="#" className="hover:text-indigo-600 transition-colors">隐私政策</a>
